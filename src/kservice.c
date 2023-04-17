@@ -62,6 +62,11 @@ rt_weak void rt_hw_us_delay(rt_uint32_t us)
         "Please consider implementing rt_hw_us_delay() in another file.\n"));
 }
 
+rt_weak const char *rt_hw_cpu_arch(void)
+{
+    return "unknown";
+}
+
 static const char* rt_errno_strs[] =
 {
     "OK",
@@ -1568,6 +1573,12 @@ rt_inline void _heap_unlock(rt_base_t level)
 #endif
 }
 
+#ifdef RT_USING_UTESTCASES
+/* export to utest to observe the inner statements */
+rt_base_t rt_heap_lock(void) __attribute__((alias("_heap_lock")));
+void rt_heap_unlock(rt_base_t level) __attribute__((alias("_heap_unlock")));
+#endif
+
 #if defined(RT_USING_SMALL_MEM_AS_HEAP)
 static rt_smem_t system_heap;
 rt_inline void _smem_info(rt_size_t *total,
@@ -1891,6 +1902,8 @@ const rt_uint8_t __lowest_bit_bitmap[] =
  * Bits are numbered starting at 1 (the least significant bit).  A return value of
  * zero from any of these functions means that the argument was zero.
  *
+ * @param value is the value to find the first bit set in.
+ *
  * @return return the index of the first bit set. If value is 0, then this function
  * shall return 0.
  */
@@ -1925,6 +1938,8 @@ const rt_uint8_t __lowest_bit_bitmap[] =
  *
  * Bits are numbered starting at 1 (the least significant bit).  A return value of
  * zero from any of these functions means that the argument was zero.
+ *
+ * @param value is the value to find the first bit set in.
  *
  * @return Return the index of the first bit set. If value is 0, then this function
  *         shall return 0.
