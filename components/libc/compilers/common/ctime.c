@@ -66,6 +66,7 @@ static const short __spm[13] =
 rt_align(4) static const char *days = "Sun Mon Tue Wed Thu Fri Sat ";
 rt_align(4) static const char *months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec ";
 
+#ifndef __isleap
 static int __isleap(int year)
 {
     /* every fourth year is a leap year except for century years that are
@@ -73,6 +74,7 @@ static int __isleap(int year)
     /*  return (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)); */
     return (!(year % 4) && ((year % 100) || !(year % 400)));
 }
+#endif
 
 static void num2str(char *c, int i)
 {
@@ -175,7 +177,7 @@ static int set_timeval(struct timeval *tv)
 struct tm *gmtime_r(const time_t *timep, struct tm *r)
 {
     int i;
-    int work = *timep % (SPD);
+    int work;
 
     if(timep == RT_NULL || r == RT_NULL)
     {
@@ -185,6 +187,7 @@ struct tm *gmtime_r(const time_t *timep, struct tm *r)
 
     rt_memset(r, RT_NULL, sizeof(struct tm));
 
+    work = *timep % (SPD);
     r->tm_sec = work % 60;
     work /= 60;
     r->tm_min = work % 60;
@@ -627,10 +630,11 @@ int clock_getres(clockid_t clockid, struct timespec *res)
     switch (clockid)
     {
     case CLOCK_REALTIME:
+#ifndef RT_USING_CPUTIME
         res->tv_sec = 0;
         res->tv_nsec = NANOSECOND_PER_SECOND/RT_TICK_PER_SECOND;
         break;
-
+#endif
 #ifdef RT_USING_CPUTIME
     case CLOCK_CPUTIME_ID:
         res->tv_sec  = 0;
@@ -668,6 +672,7 @@ int clock_gettime(clockid_t clockid, struct timespec *tp)
     switch (clockid)
     {
     case CLOCK_REALTIME:
+#ifndef RT_USING_CPUTIME
         {
             rt_tick_t tick;
             rt_base_t level;
@@ -675,11 +680,16 @@ int clock_gettime(clockid_t clockid, struct timespec *tp)
             level = rt_hw_interrupt_disable();
             tick = rt_tick_get(); /* get tick */
             tp->tv_sec  = _timevalue.tv_sec + tick / RT_TICK_PER_SECOND;
-            tp->tv_nsec = (_timevalue.tv_usec + (tick % RT_TICK_PER_SECOND) * MICROSECOND_PER_TICK) * 1000;
+            tp->tv_nsec = (_timevalue.tv_usec + (tick % RT_TICK_PER_SECOND) * MICROSECOND_PER_TICK) * 1000U;
             rt_hw_interrupt_enable(level);
+            if (tp->tv_nsec > 1000000000ULL)
+            {
+                tp->tv_nsec %= 1000000000ULL;
+                tp->tv_sec += 1;
+            }
         }
         break;
-
+#endif
 #ifdef RT_USING_CPUTIME
     case CLOCK_MONOTONIC:
     case CLOCK_CPUTIME_ID:
@@ -867,6 +877,8 @@ RTM_EXPORT(rt_timespec_to_tick);
 
 #ifdef RT_USING_POSIX_TIMER
 
+#include <resource_id.h>
+
 #define ACTIVE 1
 #define NOT_ACTIVE 0
 
@@ -930,72 +942,9 @@ static void rtthread_timer_wrapper(void *timerobj)
 
 #define TIMER_ID_MAX 50
 static struct timer_obj *_g_timerid[TIMER_ID_MAX];
-static int timerid_idx = 0;
-RT_DEFINE_SPINLOCK(_timer_id_lock);
+static void *timer_id[TIMER_ID_MAX];
+static resource_id_t id_timer = RESOURCE_ID_INIT(TIMER_ID_MAX, timer_id);
 
-void timer_id_init(void)
-{
-    for (int i = 0; i < TIMER_ID_MAX; i++)
-    {
-        _g_timerid[i] = NULL;
-    }
-    timerid_idx = 0;
-}
-
-int timer_id_alloc(void)
-{
-    for (int i = 0; i < timerid_idx; i++)
-    {
-        if (_g_timerid[i] == NULL)
-            return i;
-    }
-    if (timerid_idx < TIMER_ID_MAX)
-    {
-        timerid_idx++;
-        return timerid_idx; /* todo */
-    }
-
-    return -1;
-}
-
-void timer_id_lock()
-{
-    rt_hw_spin_lock(&_timer_id_lock);
-}
-
-void timer_id_unlock()
-{
-    rt_hw_spin_unlock(&_timer_id_lock);
-}
-
-struct timer_obj *timer_id_get(rt_ubase_t timerid)
-{
-    struct timer_obj *timer;
-
-    if (timerid < 0 || timerid >= TIMER_ID_MAX)
-    {
-        return NULL;
-    }
-
-    timer_id_lock();
-    if (_g_timerid[timerid] == NULL)
-    {
-        timer_id_unlock();
-        LOG_E("can not find timer!");
-        return NULL;
-    }
-    timer = _g_timerid[timerid];
-    timer_id_unlock();
-    return timer;
-}
-
-int timer_id_put(int id)
-{
-    if (_g_timerid[id] == NULL)
-        return -1;
-    _g_timerid[id] = NULL;
-    return 0;
-}
 /**
  * @brief Create a per-process timer.
  *
@@ -1054,17 +1003,14 @@ int timer_create(clockid_t clockid, struct sigevent *evp, timer_t *timerid)
             rt_timer_init(&timer->timer, timername, rtthread_timer_wrapper, timer, 0, RT_TIMER_FLAG_ONE_SHOT | RT_TIMER_FLAG_SOFT_TIMER);
     }
 
-    timer_id_lock();
-    _timerid = timer_id_alloc();
+    _timerid = resource_id_get(&id_timer);
     if (_timerid < 0)
     {
-        timer_id_unlock();
         LOG_E("_timerid overflow!");
         return -1; /* todo:memory leak */
     }
     _g_timerid[_timerid] = timer;
     *timerid = (timer_t)(rt_ubase_t)_timerid;
-    timer_id_unlock();
 
     return 0;
 }
@@ -1088,17 +1034,14 @@ int timer_delete(timer_t timerid)
         return -1;
     }
 
-    timer_id_lock();
     if (_g_timerid[ktimerid] == NULL)
     {
-        timer_id_unlock();
         rt_set_errno(EINVAL);
         LOG_E("can not find timer!");
         return -1;
     }
     timer = _g_timerid[ktimerid];
-    timer_id_put(ktimerid);
-    timer_id_unlock();
+    resource_id_put(&id_timer, ktimerid);
     if (timer == RT_NULL)
     {
         rt_set_errno(EINVAL);
@@ -1152,7 +1095,7 @@ int timer_gettime(timer_t timerid, struct itimerspec *its)
     struct timer_obj *timer;
     rt_uint32_t seconds, nanoseconds;
 
-    timer = timer_id_get((rt_ubase_t)timerid);
+    timer = _g_timerid[(rt_ubase_t)timerid];
 
     if (timer == NULL)
     {
@@ -1231,7 +1174,8 @@ RTM_EXPORT(timer_gettime);
 int timer_settime(timer_t timerid, int flags, const struct itimerspec *value,
                   struct itimerspec *ovalue)
 {
-    struct timer_obj *timer = timer_id_get((rt_ubase_t)timerid);
+    struct timer_obj *timer;
+    timer = _g_timerid[(rt_ubase_t)timerid];
     if (timer == NULL ||
         value->it_interval.tv_nsec < 0 ||
         value->it_interval.tv_nsec >= NANOSECOND_PER_SECOND ||
