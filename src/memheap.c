@@ -27,11 +27,7 @@
 #ifdef RT_USING_MEMHEAP
 
 #define DBG_TAG           "kernel.memheap"
-#ifdef RT_DEBUG_MEMHEAP
-#define DBG_LVL           DBG_LOG
-#else
-#define DBG_LVL           DBG_WARNING
-#endif /* defined (RT_DEBUG_MEM) */
+#define DBG_LVL           DBG_INFO
 #include <rtdbg.h>
 
 /* dynamic pool magic and mask */
@@ -865,7 +861,7 @@ void *_memheap_realloc(struct rt_memheap *heap, void *rmem, rt_size_t newsize)
 #endif
 
 #ifdef RT_USING_MEMTRACE
-int memheapcheck(int argc, char *argv[])
+static int memheapcheck(int argc, char *argv[])
 {
     struct rt_object_information *info;
     struct rt_list_node *list;
@@ -930,7 +926,7 @@ int memheapcheck(int argc, char *argv[])
 }
 MSH_CMD_EXPORT(memheapcheck, check memory for memheap);
 
-int memheaptrace(int argc, char *argv[])
+static int memheaptrace(int argc, char *argv[])
 {
     struct rt_object_information *info;
     struct rt_list_node *list;

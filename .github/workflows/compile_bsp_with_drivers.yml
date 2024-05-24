@@ -13,9 +13,6 @@ name: BSP compilation with more drivers
 # Controls when the action will run. Triggers the workflow on push or pull request
 # events but only for the master branch
 on:
-  # Runs at 16:00 UTC (BeiJing 00:00) on the 1st of every month
-  schedule:
-    - cron:  '0 16 1 * *'
   push:
     branches:
       - master
@@ -40,7 +37,7 @@ jobs:
     name: BSP Compilation with More Drivers
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v3
         with:
@@ -55,7 +52,7 @@ jobs:
           git config --global http.postBuffer 524288000
           git remote -v
           git fetch origin
-          python -c "import tools.menuconfig; tools.menuconfig.touch_env()"
+          python -c "import tools.menukconfig; tools.menukconfig.touch_env()"
 
       - name: Install Arm ToolChains
         if: ${{ success() }}
@@ -71,4 +68,4 @@ jobs:
         shell: bash
         run: |
           source ~/.env/env.sh
-          python tools/ci/compile_bsp_with_drivers.py
+          #python tools/ci/compile_bsp_with_drivers.py

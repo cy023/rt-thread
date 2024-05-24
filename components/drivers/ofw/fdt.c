@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2022, RT-Thread Development Team
+ * Copyright (c) 2006-2024, RT-Thread Development Team
  *
  * SPDX-License-Identifier: Apache-2.0
  *
@@ -13,7 +13,7 @@
 
 #include <drivers/ofw_fdt.h>
 #include <drivers/ofw_raw.h>
-#include <drivers/core/rtdm.h>
+#include <drivers/core/dm.h>
 
 #define DBG_TAG "rtdm.ofw"
 #define DBG_LVL DBG_INFO
@@ -40,7 +40,7 @@ static rt_size_t _root_addr_cells;
 
 const char *rt_fdt_node_name(const char *full_name)
 {
-    const char *node_name = rt_strrchr(full_name, '/');
+    const char *node_name = strrchr(full_name, '/');
 
     return node_name ? node_name + 1 : full_name;
 }
@@ -79,14 +79,13 @@ rt_uint64_t rt_fdt_translate_address(void *fdt, int nodeoffset, rt_uint64_t addr
             int addr_cells;
             int size_cells;
         } local, cpu;
-        int parent, length, group_len;
+        int parent, length = 0, group_len;
         const fdt32_t *ranges = RT_NULL;
 
         parent = fdt_parent_offset(fdt, nodeoffset);
 
         if (parent >= 0)
         {
-            length = 0;
             ranges = fdt_getprop(fdt, nodeoffset, "ranges", &length);
         }
 
@@ -322,7 +321,7 @@ static rt_err_t fdt_reserved_memory_reg(int nodeoffset, const char *uname)
         }
         else
         {
-            while (len >= t_len)
+            for (; len >= t_len; len -= t_len)
             {
                 base = rt_fdt_next_cell(&prop, _root_addr_cells);
                 size = rt_fdt_next_cell(&prop, _root_size_cells);
@@ -477,6 +476,19 @@ static rt_err_t fdt_scan_memory(void)
             }
 
             /*
+             *  +--------+                                    +--------+
+             *  | memory |                                    | memory |
+             *  +--------+  +----------+        +----------+  +--------+
+             *              | reserved |        | reserved |
+             *              +----------+        +----------+
+             */
+            if (res_region->start >= region->end || res_region->end <= region->start)
+            {
+                /* No adjustments needed */
+                continue;
+            }
+
+            /*
              * case 0:                      case 1:
              *  +------------------+             +----------+
              *  |      memory      |             |  memory  |
@@ -491,56 +503,49 @@ static rt_err_t fdt_scan_memory(void)
              *                 | reserved |  | reserved |
              *                 +----------+  +----------+
              */
-
-            /* case 0 */
-            if (res_region->start >= region->start && res_region->end <= region->end)
+            if (res_region->start > region->start)
             {
-                rt_size_t new_size = region->end - res_region->end;
-
-                region->end = res_region->start;
-
-                /* Commit part next block */
-                if (new_size)
+                if (res_region->end < region->end)
                 {
+                    /* case 0 */
+                    rt_size_t new_size = region->end - res_region->end;
+
+                    region->end = res_region->start;
+
+                    /* Commit part next block */
                     err = commit_memregion(region->name, res_region->end, new_size, RT_FALSE);
+
+                    if (!err)
+                    {
+                        ++no;
+
+                        /* Scan again */
+                        region = &_memregion[0];
+                        --region;
+
+                        break;
+                    }
                 }
-
-                if (!err)
+                else
                 {
-                    ++no;
-
-                    /* Scan again */
-                    region = &_memregion[0];
-                    --region;
+                    /* case 2 */
+                    region->end = res_region->start;
+                }
+            }
+            else
+            {
+                if (res_region->end < region->end)
+                {
+                    /* case 3 */
+                    region->start = res_region->end;
+                }
+                else
+                {
+                    /* case 1 */
+                    region->name = RT_NULL;
 
                     break;
                 }
-
-                continue;
-            }
-
-            /* case 1 */
-            if (res_region->start <= region->start && res_region->end >= region->end)
-            {
-                region->name = RT_NULL;
-
-                break;
-            }
-
-            /* case 2 */
-            if (res_region->start <= region->end && res_region->end >= region->end)
-            {
-                region->end = res_region->start;
-
-                continue;
-            }
-
-            /* case 3 */
-            if (res_region->start <= region->start && res_region->end >= region->start)
-            {
-                region->start = res_region->end;
-
-                continue;
             }
         }
     }
@@ -665,12 +670,17 @@ void rt_fdt_earlycon_kick(int why)
         fdt_earlycon.console_kick(&fdt_earlycon, why);
     }
 
-    if (why == FDT_EARLYCON_KICK_COMPLETED && fdt_earlycon.msg_idx)
+    if (why == FDT_EARLYCON_KICK_COMPLETED)
     {
-        fdt_earlycon.msg_idx = 0;
+        fdt_earlycon.console_putc = RT_NULL;
 
-        /* Dump old messages */
-        rt_kputs(fdt_earlycon.msg);
+        if (fdt_earlycon.msg_idx)
+        {
+            fdt_earlycon.msg_idx = 0;
+
+            /* Dump old messages */
+            rt_kputs(fdt_earlycon.msg);
+        }
     }
 }
 
@@ -702,7 +712,7 @@ rt_err_t rt_fdt_scan_chosen_stdout(void)
 
                 if (stdout_path && len)
                 {
-                    const char *path_split = rt_strchrnul(stdout_path, ':');
+                    const char *path_split = strchrnul(stdout_path, ':');
 
                     if (*path_split != '\0')
                     {
@@ -781,13 +791,15 @@ rt_err_t rt_fdt_scan_chosen_stdout(void)
 
                     if (*options)
                     {
-                        type_len = rt_strchrnul(options, ',') - options;
+                        type_len = strchrnul(options, ',') - options;
                     }
                 }
 
                 if (options && *options && *options != ' ')
                 {
-                    options_len = rt_strchrnul(options, ' ') - options;
+                    options_len = strchrnul(options, ' ') - options;
+
+                    rt_strncpy(fdt_earlycon.options, options, options_len);
                 }
 
                 /* console > stdout-path */
@@ -825,7 +837,7 @@ rt_err_t rt_fdt_scan_chosen_stdout(void)
 
                 if (best_earlycon_id && best_earlycon_id->setup)
                 {
-                    rt_bool_t used_options = RT_FALSE;
+                    const char earlycon_magic[] = { 'O', 'F', 'W', '\0' };
 
                     if (!con_type)
                     {
@@ -834,24 +846,25 @@ rt_err_t rt_fdt_scan_chosen_stdout(void)
                     fdt_earlycon.fdt = _fdt;
                     fdt_earlycon.nodeoffset = offset;
 
-                    err = best_earlycon_id->setup(&fdt_earlycon, options);
+                    options = &fdt_earlycon.options[options_len + 1];
+                    rt_strncpy((void *)options, earlycon_magic, RT_ARRAY_SIZE(earlycon_magic));
 
-                    for (int i = 0; i < options_len; ++i)
+                    err = best_earlycon_id->setup(&fdt_earlycon, fdt_earlycon.options);
+
+                    if (rt_strncmp(options, earlycon_magic, RT_ARRAY_SIZE(earlycon_magic)))
                     {
-                        if (options[i] == RT_FDT_EARLYCON_OPTION_SIGNATURE)
+                        const char *option_start = options - 1;
+
+                        while (option_start[-1] != '\0')
                         {
-                            /* Restore ',' */
-                            ((char *)options)[i++] = ',';
-                            options = &options[i];
-                            options_len -= i;
-                            used_options = RT_TRUE;
-                            break;
+                            --option_start;
                         }
+
+                        rt_memmove(fdt_earlycon.options, option_start, options - option_start);
                     }
-                    if (!used_options)
+                    else
                     {
-                        options = RT_NULL;
-                        options_len = 0;
+                        fdt_earlycon.options[0] = '\0';
                     }
                 }
             }
@@ -878,8 +891,8 @@ rt_err_t rt_fdt_scan_chosen_stdout(void)
 
     if (fdt_earlycon.mmio)
     {
-        LOG_I("Earlycon: %s at MMIO/PIO %p (options '%.*s')",
-                con_type, fdt_earlycon.mmio, options_len, options ? options : "");
+        LOG_I("Earlycon: %s at MMIO/PIO %p (options '%s')",
+                con_type, fdt_earlycon.mmio, fdt_earlycon.options);
     }
 
     return err;

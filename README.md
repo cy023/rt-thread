@@ -53,7 +53,7 @@ It includes:
 
 | Name          | Description                                             |
 | ------------- | ------------------------------------------------------- |
-| BSP          | Board Support Package based on the porting of various development boards |
+| bsp        | Board Support Package based on the porting of various development boards |
 | components    | Components, such as finsh shell, file system, protocol stack etc. |
 | documentation | Related documents, like coding style, doxygen etc.        |
 | examples      | Related sample code                                     |
@@ -144,7 +144,7 @@ RT-Thread is very grateful for the support from all community developers, and if
 
 # Contribution
 
-If you are interested in RT-Thread and want to join in the development of RT-Thread and become a code contributor,please refer to the [Code Contribution Guide](documentation/contribution_guide/contribution_guide.md).
+If you are interested in RT-Thread and want to join in the development of RT-Thread and become a code contributor,please refer to the [Code Contribution Guide](.github/CONTRIBUTING.md).
 
 ## Thanks for the following contributors!
 
